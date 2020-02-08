@@ -1,0 +1,14 @@
+#!/bin/bash
+
+SCRIPT_DIR=$PWD
+WATCH_DIR=$1
+cd ${WATCH_DIR}
+watchman-wait . --pattern '*Component.storyboard' --max-events 0 |
+while read -r FILENAME
+do
+	read
+	STORYBOARD="$SCRIPT_DIR/${WATCH_DIR}${FILENAME}"
+	SWIFT="${STORYBOARD%.*}.swift"
+	echo "Writing to ${WATCH_DIR}${FILENAME%.*}.swift"
+	${SCRIPT_DIR}/ComponentCreator $STORYBOARD > $SWIFT
+done
