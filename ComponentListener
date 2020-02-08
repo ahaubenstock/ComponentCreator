@@ -7,8 +7,8 @@ watchman-wait . --pattern '*Component.storyboard' --max-events 0 |
 while read -r FILENAME
 do
 	read
+	echo "Writing to ${WATCH_DIR}${FILENAME} and ${WATCH_DIR}${FILENAME%.*}.swift"
 	STORYBOARD="$SCRIPT_DIR/${WATCH_DIR}${FILENAME}"
 	SWIFT="${STORYBOARD%.*}.swift"
-	echo "Writing to ${WATCH_DIR}${FILENAME%.*}.swift"
-	${SCRIPT_DIR}/ComponentCreator $STORYBOARD > $SWIFT
+	${SCRIPT_DIR}/ComponentCreator $STORYBOARD $SWIFT
 done
