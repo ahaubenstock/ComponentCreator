@@ -38,15 +38,18 @@ let variables = parser.rx.didStartElement
     .takeUntil(parser.rx.didEndDocument)
     .toArray()
     .asObservable()
+let dateFormatter = DateFormatter()
+dateFormatter.dateStyle = .short
+dateFormatter.timeStyle = .short
 let swift = Observable.zip(subclass, variables)
     .map {
         """
         //
-        // Last Generated: \(Date())
+        // Last Generated: \(dateFormatter.string(from: Date()))
         //
         
         class \($0): Component {
-            \($1.joined(separator: "\n\t"))
+        \t\($1.joined(separator: "\n\t"))
         }
         
         """
