@@ -1,7 +1,7 @@
 import Foundation
 import RxSwift
 
-guard CommandLine.arguments.count != 3 else {
+guard CommandLine.arguments.count == 3 else {
     fatalError("Exactly two files must be specified.")
 }
 let storyboardPath = CommandLine.arguments[1]
@@ -18,16 +18,50 @@ let subclass = storyboardParser.rx.didStartElement
     .filter { $0.hasSuffix("Component") }
     .take(1)
 let typeMap = [
-    "label": "UILabel",
-    "button": "UIButton",
-    "view": "UIView",
-    "constraint": "NSLayoutConstraint"
+	"label": "UILabel",
+	"button": "UIButton",
+	"segmentedControl": "UISegmentedControl",
+	"textField": "UITextField",
+	"slider": "UISlider",
+	"switch": "UISwitch",
+	"activityIndicatorView": "UIActivityIndicatorView",
+	"progressView": "UIProgressView",
+	"pageControl": "UIPageControl",
+	"stepper": "UIStepper",
+	"stackView": "UIStackView",
+	"tableView": "UITableView",
+	"imageView": "UIImageView",
+	"collectionView": "UICollectionView",
+	"textView": "UITextView",
+	"scrollView": "UIScrollView",
+	"datePicker": "UIDatePicker",
+	"pickerView": "UIPickerView",
+	"mapView": "MKMapView",
+	"wkWebView": "WKWebView",
+	"view": "UIView",
+	"containerView": "UIView",
+	"searchBar": "UISearchBar",
+	"tabBar": "UITabBar",
+	"tabBarItem": "UITabBarItem",
+	"toolbar": "UIToolbar",
+	"barButtonItem": "UIBarButtonItem",
+	"navigationBar": "UINavigationBar",
+	"navigationItem": "UINavigationItem",
+    "constraint": "NSLayoutConstraint",
+	"tapGestureRecognizer": "UITapGestureRecognizer",
+	"pinchGestureRecognizer": "UIPinchGestureRecognizer",
+	"rotationGestureRecognizer": "UIRotationGestureRecognizer",
+	"swipeGestureRecognizer": "UISwipeGestureRecognizer",
+	"panGestureRecognizer": "UIPanGestureRecognizer",
+	"screenEdgePanGestureRecognizer": "UIScreenEdgePanGestureRecognizer",
+	"pongPressGestureRecognizer": "UILongPressGestureRecognizer", // Bug in Xcode?
+	"longPressGestureRecognizer": "UILongPressGestureRecognizer",
+	"gestureRecognizer": "UIGestureRecognizer",
 ]
 let tagNames = Set(typeMap.keys)
 let types = storyboardParser.rx.didStartElement
     .filter { tagNames.contains($0.element) }
-    .map { $0.element }
-    .map { typeMap[$0]! }
+	.map { $0.attributes["customClass", default: typeMap[$0.element]!] }
 let variables = storyboardParser.rx.didStartElement
     .filter { $0.element == "userDefinedRuntimeAttribute" }
     .map { $0.attributes }
@@ -40,26 +74,62 @@ let variables = storyboardParser.rx.didStartElement
     .toArray()
     .asObservable()
 	.map { $0.joined(separator: "\n\t") }
-let swift = Observable.zip(subclass, variables)
-	.map { (subclass: String, variables: String) -> String in
-		let swiftURL = URL(fileURLWithPath: swiftPath)
-		let originalSwift = (try? String(contentsOf: swiftURL, encoding: .utf8)) ?? ""
+	.map { "\t\($0)" }
+let original = Observable.just(swiftPath)
+	.map { URL(fileURLWithPath: $0) }
+	.map { try? String(contentsOf: $0, encoding: .utf8) }
+	.map { $0 ?? "import UIKit" }
+let surrounding = Observable.zip(original, subclass)
+	.map { (swift: String, subclass: String) -> (String, String) in
+		let regex = try! NSRegularExpression(pattern: #"class +\#(subclass) *: *Component.*?\{"#, options: .dotMatchesLineSeparators)
+		let searchRange = NSRange(location: 0, length: swift.count)
 		let before: String
-		let remaining: String
-		if let range = (try? NSRegularExpression(pattern: #"class +\#(subclass) *: *Component.*?\{"#, options: .dotMatchesLineSeparators))?.firstMatch(in: originalSwift, range: NSRange(location: 0, length: originalSwift.count))?.range {
-			before = String(originalSwift.prefix(range.location + range.length))
-			remaining = originalSwift.suffix(originalSwift.count - range.location - range.length)
+		let after: String
+		if let range = regex.firstMatch(in: swift, range: searchRange)?.range {
+			let indexOfClassOpeningBrace = range.location + range.length - 1
+			let fromOpeningBrace = swift.suffix(swift.count - indexOfClassOpeningBrace)
+			let indexOfClassClosingBrace = indexOfClassOpeningBrace + endOfCurlyBraceEnclosure(in: fromOpeningBrace)
+			before = String(swift.prefix(indexOfClassOpeningBrace + 1))
+			let start = swift.index(swift.startIndex, offsetBy: indexOfClassOpeningBrace + 1)
+			let end = swift.index(swift.startIndex, offsetBy: indexOfClassClosingBrace)
+			let restOfClass = swift[start...end]
 				.split(separator: "\n")
 				.filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("@IBOutlet") }
 				.joined(separator: "\n")
+			let restOfFile = swift.suffix(swift.count - indexOfClassClosingBrace)
+			after = "\(restOfClass)\(restOfFile)"
 		} else {
-			before = "class \(subclass): Component {"
-			remaining = "}"
+			before =
+			"""
+			\(swift)
+			
+			class \(subclass): Component {
+			"""
+			after =
+			"""
+			}
+			
+			"""
 		}
-		return "\(before)\n\t\(variables)\n\(remaining)"
+		return (before, after)
+	}
+let swift = Observable.zip(variables, surrounding) { ($0, $1.0, $1.1) }
+	.map { (variables: String, before: String, after: String) in
+		"""
+		\(before)
+		\(variables)
+		\(after)
+		"""
 	}
 _ = swift
-	.subscribe(onNext: { print($0) })
+	.bind(onNext: {
+		do {
+			try $0.write(toFile: swiftPath, atomically: true, encoding: .utf8)
+		} catch let error {
+			print("⚠️ \(error.localizedDescription)")
+		}
+	})
+
 if !storyboardParser.parse() {
     fatalError("Unable to parse the storyboard file.")
 }
