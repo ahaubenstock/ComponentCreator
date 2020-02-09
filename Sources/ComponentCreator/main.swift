@@ -55,6 +55,8 @@ let swift = Observable.zip(subclass, variables)
 		} else {
 			return
 				"""
+				\(originalSwift)
+				
 				class \(subclass): Component {
 					\(variables)
 				}
