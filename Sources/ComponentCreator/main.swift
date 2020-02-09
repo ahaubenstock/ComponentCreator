@@ -1,14 +1,14 @@
 import Foundation
 import RxSwift
 
-guard CommandLine.arguments.count > 2 else {
-    fatalError("Less than two files were specified.")
+guard CommandLine.arguments.count != 3 else {
+    fatalError("Exactly two files must be specified.")
 }
 let storyboardPath = CommandLine.arguments[1]
 let swiftPath = CommandLine.arguments[2]
 let storyboardURL = URL(fileURLWithPath: storyboardPath)
 guard let storyboardData = try? Data(contentsOf: storyboardURL) else {
-    fatalError("Unable to read the file.")
+    fatalError("Unable to read the storyboard file.")
 }
 let storyboardParser = XMLParser(data: storyboardData)
 let subclass = storyboardParser.rx.didStartElement
@@ -40,32 +40,26 @@ let variables = storyboardParser.rx.didStartElement
     .toArray()
     .asObservable()
 	.map { $0.joined(separator: "\n\t") }
-let originalSwift = (try? String(contentsOf: URL(fileURLWithPath: swiftPath), encoding: .utf8)) ?? ""
 let swift = Observable.zip(subclass, variables)
 	.map { (subclass: String, variables: String) -> String in
-		if let match = (try! NSRegularExpression(pattern: #"class +\#(subclass) *: *Component.*?\{"#, options: .dotMatchesLineSeparators))
-			.firstMatch(in: originalSwift, range: NSRange(location: 0, length: originalSwift.count)) {
-			let before = originalSwift.prefix(match.range.location + match.range.length)
-			let after = originalSwift.suffix(from: originalSwift.index(originalSwift.startIndex, offsetBy: match.range.location + match.range.length))
-			let remaining = after
+		let swiftURL = URL(fileURLWithPath: swiftPath)
+		let originalSwift = (try? String(contentsOf: swiftURL, encoding: .utf8)) ?? ""
+		let before: String
+		let remaining: String
+		if let range = (try? NSRegularExpression(pattern: #"class +\#(subclass) *: *Component.*?\{"#, options: .dotMatchesLineSeparators))?.firstMatch(in: originalSwift, range: NSRange(location: 0, length: originalSwift.count))?.range {
+			before = String(originalSwift.prefix(range.location + range.length))
+			remaining = originalSwift.suffix(originalSwift.count - range.location - range.length)
 				.split(separator: "\n")
 				.filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("@IBOutlet") }
 				.joined(separator: "\n")
-			return "\(before)\n\t\(variables)\n\(remaining)"
 		} else {
-			return
-				"""
-				\(originalSwift)
-				
-				class \(subclass): Component {
-					\(variables)
-				}
-				
-				"""
+			before = "class \(subclass): Component {"
+			remaining = "}"
 		}
+		return "\(before)\n\t\(variables)\n\(remaining)"
 	}
 _ = swift
 	.subscribe(onNext: { print($0) })
 if !storyboardParser.parse() {
-    fatalError("Parsing failed.")
+    fatalError("Unable to parse the storyboard file.")
 }
