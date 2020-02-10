@@ -81,38 +81,3 @@ viewControllerProperties
 			print("⚠️ \(error.localizedDescription)")
 		}
 	}
-viewControllerProperties
-	.map {(
-		viewController: $0.viewController,
-		properties: $0.properties.map {(
-			name: $0.name,
-			id: $0.id
-		)}
-	)}
-	.forEach {
-		let connections = XMLNode.element(withName: "connections") as! XMLElement
-		connections.setChildren(
-			$0.properties
-				.map {
-					let node = XMLNode.element(withName: "outlet") as! XMLElement
-					node.setAttributesWith([
-						"property": $0.name,
-						"destination": $0.id,
-						"id": id()
-					])
-					return node
-				}
-		)
-		let vcNode = try! storyboard.nodes(forXPath: "//viewController[@customClass='\($0.viewController)']").first as! XMLElement
-		if let _connections = try? vcNode.nodes(forXPath: "./connections").first {
-			vcNode.removeChild(at: _connections.index)
-		}
-		vcNode.addChild(connections)
-	}
-print("Writing to \(storyboardPath)")
-do {
-	try "\(storyboard)".write(to: storyboardURL, atomically: true, encoding: .utf8)
-} catch let error {
-	print("⚠️ \(error.localizedDescription)")
-}
-
