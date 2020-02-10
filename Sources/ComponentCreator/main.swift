@@ -1,87 +1,45 @@
 import Foundation
-import RxSwift
 
 guard CommandLine.arguments.count == 3 else {
-    fatalError("Exactly two files must be specified.")
+    fatalError("Exactly one file and one directory must be specified.")
 }
 let storyboardPath = CommandLine.arguments[1]
-let swiftPath = CommandLine.arguments[2]
+let swiftDirPath = CommandLine.arguments[2]
 let storyboardURL = URL(fileURLWithPath: storyboardPath)
-guard let storyboardData = try? Data(contentsOf: storyboardURL) else {
+guard let storyboard = try? XMLDocument(contentsOf: storyboardURL, options: []) else {
     fatalError("Unable to read the storyboard file.")
 }
-let storyboardParser = XMLParser(data: storyboardData)
-let subclass = storyboardParser.rx.didStartElement
-    .filter { $0.element == "viewController" }
-    .map { $0.attributes }
-    .map { $0["customClass"]! }
-    .filter { $0.hasSuffix("Component") }
-    .take(1)
-let typeMap = [
-	"label": "UILabel",
-	"button": "UIButton",
-	"segmentedControl": "UISegmentedControl",
-	"textField": "UITextField",
-	"slider": "UISlider",
-	"switch": "UISwitch",
-	"activityIndicatorView": "UIActivityIndicatorView",
-	"progressView": "UIProgressView",
-	"pageControl": "UIPageControl",
-	"stepper": "UIStepper",
-	"stackView": "UIStackView",
-	"tableView": "UITableView",
-	"imageView": "UIImageView",
-	"collectionView": "UICollectionView",
-	"textView": "UITextView",
-	"scrollView": "UIScrollView",
-	"datePicker": "UIDatePicker",
-	"pickerView": "UIPickerView",
-	"mapView": "MKMapView",
-	"wkWebView": "WKWebView",
-	"view": "UIView",
-	"containerView": "UIView",
-	"searchBar": "UISearchBar",
-	"tabBar": "UITabBar",
-	"tabBarItem": "UITabBarItem",
-	"toolbar": "UIToolbar",
-	"barButtonItem": "UIBarButtonItem",
-	"navigationBar": "UINavigationBar",
-	"navigationItem": "UINavigationItem",
-    "constraint": "NSLayoutConstraint",
-	"tapGestureRecognizer": "UITapGestureRecognizer",
-	"pinchGestureRecognizer": "UIPinchGestureRecognizer",
-	"rotationGestureRecognizer": "UIRotationGestureRecognizer",
-	"swipeGestureRecognizer": "UISwipeGestureRecognizer",
-	"panGestureRecognizer": "UIPanGestureRecognizer",
-	"screenEdgePanGestureRecognizer": "UIScreenEdgePanGestureRecognizer",
-	"pongPressGestureRecognizer": "UILongPressGestureRecognizer", // Bug in Xcode?
-	"longPressGestureRecognizer": "UILongPressGestureRecognizer",
-	"gestureRecognizer": "UIGestureRecognizer",
-]
-let tagNames = Set(typeMap.keys)
-let types = storyboardParser.rx.didStartElement
-    .filter { tagNames.contains($0.element) }
-	.map { $0.attributes["customClass", default: typeMap[$0.element]!] }
-let variables = storyboardParser.rx.didStartElement
-    .filter { $0.element == "userDefinedRuntimeAttribute" }
-    .map { $0.attributes }
-    .filter { $0.keys.contains("keyPath") }
-    .filter { $0["keyPath"] == "variableName" }
-    .map { $0["value"]! }
-    .withLatestFrom(types) { (name: $0, type: $1) }
-    .map { "@IBOutlet weak var \($0.name): \($0.type)!" }
-    .takeUntil(storyboardParser.rx.didEndDocument)
-    .toArray()
-    .asObservable()
-	.map { $0.joined(separator: "\n\t") }
-	.map { "\t\($0)" }
-let original = Observable.just(swiftPath)
-	.map { URL(fileURLWithPath: $0) }
-	.map { try? String(contentsOf: $0, encoding: .utf8) }
-	.map { $0 ?? "import UIKit" }
-let surrounding = Observable.zip(original, subclass)
-	.map { (swift: String, subclass: String) -> (String, String) in
-		let regex = try! NSRegularExpression(pattern: #"class +\#(subclass) *: *Component.*?\{"#, options: .dotMatchesLineSeparators)
+let viewControllerProperties = (try! storyboard.objects(forXQuery: "for $vc in //viewController[@customClass] return data($vc/@customClass)"))
+	.map { $0 as! String }
+	.map {(
+		$0,
+		(try! storyboard.nodes(forXPath: "//scene[objects/viewController/@customClass='\($0)']//*[userDefinedRuntimeAttributes/userDefinedRuntimeAttribute/@keyPath='variableName']")).map { $0 as! XMLElement }
+	)}
+	.map {(
+		viewController: $0.0,
+		properties: $0.1
+			.map {(
+				class: $0.attribute(forName: "customClass")?.stringValue ?? typeMap[$0.name!]!,
+				name: ((try! $0.nodes(forXPath: "./userDefinedRuntimeAttributes/userDefinedRuntimeAttribute[@keyPath='variableName']")).first as! XMLElement).attribute(forName: "value")!.stringValue!,
+				id: $0.attribute(forName: "id")!.stringValue!
+			)}
+	)}
+
+viewControllerProperties
+	.map {(
+		$0.viewController,
+		"\t" + $0.properties
+			.map { "@IBOutlet weak var \($0.name): \($0.class)!" }
+			.joined(separator: "\t\n")
+	)}
+	.forEach { (subclass: String, variables: String) in
+		var swift = "import UIKit"
+		let swiftPath = "\(swiftDirPath)\(subclass).swift"
+		let swiftURL = URL(fileURLWithPath: swiftPath)
+		if let original = try? String(contentsOf: swiftURL, encoding: .utf8) {
+			swift = original
+		}
+		let regex = try! NSRegularExpression(pattern: #"class +\#(subclass) *:.*?\{"#, options: .dotMatchesLineSeparators)
 		let searchRange = NSRange(location: 0, length: swift.count)
 		let before: String
 		let after: String
@@ -102,34 +60,57 @@ let surrounding = Observable.zip(original, subclass)
 			before =
 			"""
 			\(swift)
-			
+
 			class \(subclass): Component {
 			"""
 			after =
 			"""
 			}
-			
+
 			"""
 		}
-		return (before, after)
-	}
-let swift = Observable.zip(variables, surrounding) { ($0, $1.0, $1.1) }
-	.map { (variables: String, before: String, after: String) in
+		let output =
 		"""
 		\(before)
 		\(variables)
 		\(after)
 		"""
-	}
-_ = swift
-	.bind(onNext: {
+		print("Writing to \(swiftPath)")
 		do {
-			try $0.write(toFile: swiftPath, atomically: true, encoding: .utf8)
+			try output.write(to: swiftURL, atomically: true, encoding: .utf8)
 		} catch let error {
 			print("⚠️ \(error.localizedDescription)")
 		}
-	})
+	}
 
-if !storyboardParser.parse() {
-    fatalError("Unable to parse the storyboard file.")
+viewControllerProperties
+	.map {(
+		viewController: $0.viewController,
+		properties: $0.properties.map {(
+			name: $0.name,
+			id: $0.id
+		)}
+	)}
+	.forEach {
+		let vcNode = try! storyboard.nodes(forXPath: "//viewController[@customClass='\($0.viewController)']").first!
+		let connections = try! vcNode.nodes(forXPath: "./connections").first as! XMLElement
+		connections.setChildren(
+			$0.properties
+				.map {
+					let node = XMLNode.element(withName: "outlet") as! XMLElement
+					node.setAttributesWith([
+						"property": $0.name,
+						"destination": $0.id,
+						"id": id()
+					])
+					return node
+				}
+		)
+	}
+
+print("Writing to \(storyboardPath)")
+do {
+	try "\(storyboard)".write(to: storyboardURL, atomically: true, encoding: .utf8)
+} catch let error {
+	print("⚠️ \(error.localizedDescription)")
 }
