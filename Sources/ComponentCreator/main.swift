@@ -33,13 +33,13 @@ viewControllerProperties
 			.joined(separator: "\n\t")
 	)}
 	.forEach { (subclass: String, variables: String) in
-		var swift = "import UIKit"
 		let swiftPath = "\(swiftDirPath)\(subclass).swift"
 		let swiftURL = URL(fileURLWithPath: swiftPath)
-		if let original = try? String(contentsOf: swiftURL, encoding: .utf8) {
-			swift = original
+		guard var swift = try? String(contentsOf: swiftURL, encoding: .utf8) else {
+			return
 		}
-		let regex = try! NSRegularExpression(pattern: #"class +\#(subclass) *:.*?\{"#, options: .dotMatchesLineSeparators)
+		if swift.isEmpty { swift = "import UIKit" }
+		let regex = try! NSRegularExpression(pattern: #"class +\#(subclass) *: *Component.*?\{"#, options: .dotMatchesLineSeparators)
 		let searchRange = NSRange(location: 0, length: swift.count)
 		let before: String
 		let after: String
