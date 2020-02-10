@@ -30,7 +30,7 @@ viewControllerProperties
 		$0.viewController,
 		"\t" + $0.properties
 			.map { "@IBOutlet weak var \($0.name): \($0.class)!" }
-			.joined(separator: "\t\n")
+			.joined(separator: "\n\t")
 	)}
 	.forEach { (subclass: String, variables: String) in
 		var swift = "import UIKit"
